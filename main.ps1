@@ -1,8 +1,8 @@
 # Import the Active Directory module
 Import-Module ActiveDirectory
 
-# Get Password Policy settings from Active Directory
-$passwordPolicy = Get-ADDefaultDomainPasswordPolicy
+# Import the AzureAD module
+Import-Module AzureAD
 
 # Define the standard values
 $standardMinPasswordLength = 8
@@ -11,6 +11,37 @@ $standardMinPasswordAge = 1
 $standardComplexityEnabled = $true
 $standardHistorySize = 24
 $standardReversibleEncryption = $false
+$standardMFAEnabledPercentage = 100  # Define the standard MFA enabled percentage, here assumed 100%
+
+# Initialize MFA compliance check variables
+$mfaEnabledPercentage = 0
+$azureADConnection = $false
+$mfaCheckResult = "Azure AD MFA check not performed due to connection issue."
+
+# Attempt to connect to Azure AD
+try {
+    Connect-AzureAD -ErrorAction Stop
+    $azureADConnection = $true
+} catch {
+    Write-Host "Could not connect to Azure AD. Proceeding without MFA check."
+}
+
+# Get Password Policy settings from Active Directory
+$passwordPolicy = Get-ADDefaultDomainPasswordPolicy
+
+# If connected to Azure AD, perform MFA check
+if ($azureADConnection) {
+    $mfaUsers = Get-AzureADUser -All $true | Where-Object { (Get-AzureADUserMFAState -ObjectId $_.ObjectId).State -eq "Enabled" }
+    $totalUsers = (Get-AzureADUser -All $true).Count
+    $mfaEnabledCount = $mfaUsers.Count
+    $mfaEnabledPercentage = ($mfaEnabledCount / $totalUsers) * 100
+
+    if ($mfaEnabledPercentage -lt $standardMFAEnabledPercentage) {
+        $mfaCheckResult = "MFA Enabled Percentage is less than standard ($standardMFAEnabledPercentage%)."
+    } else {
+        $mfaCheckResult = "MFA Enabled Percentage is compliant."
+    }
+}
 
 # Prepare the output
 $output = @"
@@ -63,6 +94,10 @@ if ($passwordPolicy.ReversibleEncryptionEnabled -eq $standardReversibleEncryptio
 } else {
     $output += "`nReversible Encryption is compliant."
 }
+
+$output += "`nMFA Compliance Check:"
+$output += "`n----------------------------"
+$output += "`n$mfaCheckResult"
 
 # Write the output to resultaten.txt
 $output | Out-File -FilePath "resultaten.txt"
